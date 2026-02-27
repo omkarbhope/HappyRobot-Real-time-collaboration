@@ -43,6 +43,7 @@ export default function BoardPage() {
   const setCommentPositionByTaskId = useBoardStore((s) => s.setCommentPositionByTaskId);
   const setFocusStickyId = useBoardStore((s) => s.setFocusStickyId);
   const removeTask = useBoardStore((s) => s.removeTask);
+  const clearRedoStack = useBoardStore((s) => s.clearRedoStack);
   const reset = useBoardStore((s) => s.reset);
   const setEdges = useBoardStore((s) => s.setEdges);
   const showMinimap = useBoardStore((s) => s.showMinimap);
@@ -59,8 +60,15 @@ export default function BoardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const loadedBoardIdRef = useRef<string | null>(null);
+  const taskCacheRef = useRef<Map<string, Task>>(new Map());
+  const viewportDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const VIEWPORT_PADDING = 0.2;
+  const VIEWPORT_DEBOUNCE_MS = 400;
 
-  const wsRef = useBoardWs(boardId);
+  const wsRef = useBoardWs(boardId, {
+    onTaskUpserted: (task) => taskCacheRef.current.set(task.id, task),
+    onTaskRemoved: (taskId) => taskCacheRef.current.delete(taskId),
+  });
   useUndoKeyboard();
   const { copySelection, paste, duplicate, canPaste } = useCopyPasteDuplicate(boardId);
   const sendCursor = useCallback(
@@ -94,8 +102,11 @@ export default function BoardPage() {
       __onFormatChange?: (nodeIds: string[], key: string, value: string) => void;
     };
     const patchTaskDebounced = getDebouncedTaskPatch((taskId, res) => {
-      if (res.data) addOrUpdateTask(res.data);
-      else toast.error(res.error ?? "Failed to save");
+      if (res.data) {
+        clearRedoStack();
+        taskCacheRef.current.set(res.data.id, res.data);
+        addOrUpdateTask(res.data);
+      } else toast.error(res.error ?? "Failed to save");
     });
 
     win.__onShapeResize = (id: string, w: number, h: number, shapeType: string) => {
@@ -206,8 +217,12 @@ export default function BoardPage() {
       apiPatch<{ results: Array<{ taskId: string; task: Task | null }> }>("/api/tasks/bulk", { updates }).then(
         (res) => {
           if (res.data?.results) {
+            clearRedoStack();
             for (const { task } of res.data.results) {
-              if (task) addOrUpdateTask(task);
+              if (task) {
+                taskCacheRef.current.set(task.id, task);
+                addOrUpdateTask(task);
+              }
             }
           } else {
             toast.error((res as { error?: string }).error ?? "Failed to save");
@@ -280,7 +295,75 @@ export default function BoardPage() {
       delete win.__onFrameResize;
       delete win.__onFormatChange;
     };
-  }, [addOrUpdateTask, setNodes]);
+  }, [addOrUpdateTask, setNodes, clearRedoStack]);
+
+  function getTasksInBoundsFromCache(
+    cache: Map<string, Task>,
+    bounds: { minX: number; minY: number; maxX: number; maxY: number }
+  ): Task[] {
+    const nodeIds = new Set<string>();
+    const nodeTasks: Task[] = [];
+    const connectorTasks: Task[] = [];
+    for (const task of cache.values()) {
+      const config = task.configuration as { type?: string; position?: { x: number; y: number } } | null | undefined;
+      const type = config?.type ?? "sticky";
+      if (type === "connector") {
+        connectorTasks.push(task);
+        continue;
+      }
+      const pos = config?.position ?? { x: 0, y: 0 };
+      const x = pos.x ?? 0;
+      const y = pos.y ?? 0;
+      if (x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY) {
+        nodeTasks.push(task);
+        nodeIds.add(task.id);
+      }
+    }
+    const connectorsInBounds = connectorTasks.filter((t) => {
+      const deps = t.dependencies as string[] | null;
+      if (!Array.isArray(deps) || deps.length < 2) return false;
+      return nodeIds.has(deps[0]) && nodeIds.has(deps[1]);
+    });
+    return [...nodeTasks, ...connectorsInBounds];
+  }
+
+  const handleViewportChange = useCallback(
+    (
+      viewport: { x: number; y: number; zoom: number },
+      paneSize: { width: number; height: number }
+    ) => {
+      if (!boardId) return;
+      const { x, y, zoom } = viewport;
+      const pad = VIEWPORT_PADDING;
+      const w = paneSize.width;
+      const h = paneSize.height;
+      const minX = (-x - w * pad) / zoom;
+      const minY = (-y - h * pad) / zoom;
+      const maxX = (-x + w * (1 + pad)) / zoom;
+      const maxY = (-y + h * (1 + pad)) / zoom;
+
+      if (viewportDebounceRef.current) clearTimeout(viewportDebounceRef.current);
+      viewportDebounceRef.current = setTimeout(() => {
+        viewportDebounceRef.current = null;
+        const bounds = { minX, minY, maxX, maxY };
+        const q = new URLSearchParams({
+          projectId: boardId,
+          minX: String(minX),
+          minY: String(minY),
+          maxX: String(maxX),
+          maxY: String(maxY),
+        });
+        apiGet<{ items: Task[] }>(`/api/tasks?${q.toString()}`).then((res) => {
+          if (res.error || !res.data) return;
+          const cache = taskCacheRef.current;
+          for (const t of res.data.items) cache.set(t.id, t);
+          const tasksInBounds = getTasksInBoundsFromCache(cache, bounds);
+          applyTasksToFlow(tasksInBounds);
+        });
+      }, VIEWPORT_DEBOUNCE_MS);
+    },
+    [boardId, applyTasksToFlow]
+  );
 
   useEffect(() => {
     if (!boardId || status !== "authenticated") return;
@@ -288,6 +371,7 @@ export default function BoardPage() {
     if (loadedBoardIdRef.current !== boardId) {
       reset();
       loadedBoardIdRef.current = boardId;
+      taskCacheRef.current = new Map();
     } else {
       const currentProject = useBoardStore.getState().project;
       if (currentProject?.id === boardId) return;
@@ -318,7 +402,11 @@ export default function BoardPage() {
       }
 
       if (projRes.data) setProject(projRes.data);
-      if (tasksRes.data?.items) applyTasksToFlow(tasksRes.data.items);
+      if (tasksRes.data?.items) {
+        const cache = taskCacheRef.current;
+        for (const t of tasksRes.data.items) cache.set(t.id, t);
+        applyTasksToFlow(tasksRes.data.items);
+      }
       const summaryRes = await apiGet<CommentSummaryItem[]>(`/api/comments/summary?projectId=${boardId}`);
       if (!cancelled && summaryRes.data) {
         const counts: Record<string, number> = {};
@@ -379,12 +467,14 @@ export default function BoardPage() {
       }).then((res) => {
         setNodes((prev) => prev.filter((n) => n.id !== tempId));
         if (res.data) {
+          clearRedoStack();
+          taskCacheRef.current.set(res.data.id, res.data);
           addOrUpdateTask(res.data);
           setActiveTool("select");
         } else toast.error(res.error ?? "Failed to create");
       });
     },
-    [boardId, addOrUpdateTask, setNodes, setActiveTool]
+    [boardId, addOrUpdateTask, setNodes, setActiveTool, clearRedoStack]
   );
 
   const handleFreehandStrokeEnd = useCallback(
@@ -402,12 +492,14 @@ export default function BoardPage() {
         },
       }).then((res) => {
         if (res.data) {
+          clearRedoStack();
+          taskCacheRef.current.set(res.data.id, res.data);
           addOrUpdateTask(res.data);
           setActiveTool("select");
         } else toast.error(res.error ?? "Failed to create drawing");
       });
     },
-    [boardId, addOrUpdateTask, setActiveTool]
+    [boardId, addOrUpdateTask, setActiveTool, clearRedoStack]
   );
 
   const handleRename = useCallback(
@@ -442,9 +534,11 @@ export default function BoardPage() {
         toast.error(res.error ?? "Failed to delete");
         return;
       }
+      clearRedoStack();
+      taskCacheRef.current.delete(taskId);
       removeTask(taskId);
     });
-  }, [removeTask]);
+  }, [removeTask, clearRedoStack]);
 
   const handleCanvasDelete = useCallback(
     ({ nodeIds, edgeIds }: { nodeIds: string[]; edgeIds: string[] }) => {
@@ -531,6 +625,7 @@ export default function BoardPage() {
             onDelete={handleCanvasDelete}
             sendCursor={sendCursor}
             showMinimap={showMinimap}
+            onViewportChange={handleViewportChange}
           />
         </div>
       </div>

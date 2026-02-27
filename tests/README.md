@@ -17,10 +17,16 @@ npm run test:e2e:ui   # Playwright UI mode
 
 ## Vitest (unit + integration)
 
-- **Unit:** `tests/unit/` – Core modules (cache, rate-limit, realtime) and feature services (with mocked db).
-- **Integration:** `tests/integration/` – API route handlers with mocked auth/rate-limit; assert status and body.
+- **Unit:** `tests/unit/` – Core modules (cache, rate-limit, realtime) and feature services (projects, tasks, undo) with mocked db/events/realtime.
+- **Integration:** `tests/integration/` – API route handlers with mocked auth/rate-limit: projects (GET list, POST create), projects/[id] (GET/PATCH/DELETE), tasks (GET/POST), tasks/[id] (GET/PATCH/DELETE), events (GET), events/undo (POST), events/redo (POST), comments (GET/POST), invite (create/join). Assert status, body, 401/403/404/400 where relevant.
 
 Run with: `npm run test:run`. No database required for current tests (mocks used).
+
+## Load tests (k6)
+
+- **Location:** `tests/load/` – k6 scripts for GET /api/projects and GET /api/tasks.
+- **Run:** `k6 run -e BASE_URL=http://localhost:3000 tests/load/projects.js` (install k6 first, e.g. `brew install k6`).
+- **Auth:** Optional `SESSION_COOKIE` env for authenticated load. See `tests/load/README.md`.
 
 ## Playwright (e2e)
 

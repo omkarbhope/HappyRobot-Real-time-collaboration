@@ -49,12 +49,12 @@ export function NotificationsDropdown({ onOpenCommentTask }: NotificationsDropdo
   const unreadCount = list.filter((n) => !n.read).length;
 
   const handleMarkRead = async (id: string) => {
-    await apiPatch(`/api/notifications/${id}`);
+    await apiPatch(`/api/notifications/${id}`, { read: true });
     setList((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   };
 
   const handleMarkAllRead = async () => {
-    await apiPatch("/api/notifications/read-all");
+    await apiPatch("/api/notifications/read-all", {});
     setList((prev) => prev.map((n) => ({ ...n, read: true })));
   };
 

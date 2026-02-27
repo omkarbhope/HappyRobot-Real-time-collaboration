@@ -116,6 +116,82 @@ export async function listByProject(projectId: string, userId: string, cursor?: 
   return { items, nextCursor: hasMore ? items[items.length - 1]?.id : null };
 }
 
+export interface BoundsFilter {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+const MAX_BOUNDS_LIMIT = 500;
+
+/**
+ * List tasks whose position falls inside the given rectangle (flow coordinates).
+ * Returns node tasks in bounds plus connector tasks whose both endpoints are in the result set.
+ */
+export async function listByProjectInBounds(
+  projectId: string,
+  userId: string,
+  bounds: BoundsFilter,
+  limit = MAX_BOUNDS_LIMIT
+) {
+  const member = await db.projectMember.findFirst({
+    where: { projectId, userId },
+  });
+  if (!member) return { items: [] };
+
+  const { minX, minY, maxX, maxY } = bounds;
+  const take = Math.min(limit, MAX_BOUNDS_LIMIT);
+
+  const nodesInBounds = await db.$queryRaw<
+    Array<{
+      id: string;
+      projectId: string;
+      parentId: string | null;
+      title: string;
+      status: string;
+      assignedTo: unknown;
+      configuration: unknown;
+      dependencies: unknown;
+      createdById: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT t.id, t."projectId", t."parentId", t.title, t.status, t."assignedTo",
+           t.configuration, t.dependencies, t."createdById", t."createdAt", t."updatedAt"
+    FROM "Task" t
+    WHERE t."projectId" = ${projectId}
+      AND t.configuration->'position'->>'x' IS NOT NULL
+      AND t.configuration->'position'->>'y' IS NOT NULL
+      AND (t.configuration->>'type') IS DISTINCT FROM 'connector'
+      AND (t.configuration->'position'->>'x')::double precision >= ${minX}
+      AND (t.configuration->'position'->>'x')::double precision <= ${maxX}
+      AND (t.configuration->'position'->>'y')::double precision >= ${minY}
+      AND (t.configuration->'position'->>'y')::double precision <= ${maxY}
+    LIMIT ${take}
+  `;
+
+  const nodeIds = new Set(nodesInBounds.map((t) => t.id));
+  if (nodeIds.size === 0) return { items: nodesInBounds };
+
+  const connectors = await db.task.findMany({
+    where: {
+      projectId,
+      configuration: { path: ["type"], equals: "connector" },
+    },
+  });
+
+  const connectorTasks = connectors.filter((t) => {
+    const deps = t.dependencies as string[] | null;
+    if (!Array.isArray(deps) || deps.length < 2) return false;
+    return nodeIds.has(deps[0]) && nodeIds.has(deps[1]);
+  });
+
+  const items = [...nodesInBounds, ...connectorTasks];
+  return { items };
+}
+
 export async function update(taskId: string, userId: string, input: UpdateTaskInput) {
   const task = await db.task.findUnique({
     where: { id: taskId },

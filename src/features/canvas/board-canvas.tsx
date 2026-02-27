@@ -48,6 +48,11 @@ interface BoardCanvasProps {
   onDelete?: (params: { nodeIds: string[]; edgeIds: string[] }) => void;
   sendCursor?: (point: { x: number; y: number }) => void;
   showMinimap?: boolean;
+  /** Called when viewport (pan/zoom) changes. Receives viewport and pane size for bounds calculation. */
+  onViewportChange?: (
+    viewport: { x: number; y: number; zoom: number },
+    paneSize: { width: number; height: number }
+  ) => void;
 }
 
 export function BoardCanvas({
@@ -60,7 +65,9 @@ export function BoardCanvas({
   onDelete,
   sendCursor,
   showMinimap = true,
+  onViewportChange,
 }: BoardCanvasProps) {
+  const paneRef = useRef<HTMLDivElement>(null);
   const nodesFromStore = useBoardStore((s) => s.nodes);
   const edgesFromStore = useBoardStore((s) => s.edges);
   const layers = useBoardStore((s) => s.layers);
@@ -149,7 +156,21 @@ export function BoardCanvas({
 
   const paneClickHandler = isCreateToolActive && !isFreehandActive ? handlePaneClick : undefined;
 
+  const handleViewportChange = useCallback(
+    (viewport: { x: number; y: number; zoom: number }) => {
+      if (!onViewportChange) return;
+      const el = paneRef.current;
+      const width = el?.offsetWidth ?? 0;
+      const height = el?.offsetHeight ?? 0;
+      if (width > 0 && height > 0) {
+        onViewportChange(viewport, { width, height });
+      }
+    },
+    [onViewportChange]
+  );
+
   return (
+    <div ref={paneRef} className="h-full w-full">
     <ReactFlow
       nodes={nodesWithLayerVisibility}
       edges={edgesWithLayerVisibility}
@@ -158,6 +179,7 @@ export function BoardCanvas({
       onConnect={isConnectTool(activeTool) ? onConnectHandler : undefined}
       onPaneClick={paneClickHandler}
       onPaneMouseMove={handlePaneMouseMove}
+      onViewportChange={handleViewportChange}
       onNodeDragStop={handleNodeDragStop}
       onNodeContextMenu={onNodeContextMenu}
       onEdgeContextMenu={onEdgeContextMenu}
@@ -205,5 +227,6 @@ export function BoardCanvas({
       <Controls />
       {showMinimap && <MiniMap pannable zoomable />}
     </ReactFlow>
+    </div>
   );
 }

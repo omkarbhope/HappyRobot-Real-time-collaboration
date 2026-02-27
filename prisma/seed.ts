@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { nanoid } from "nanoid";
 
 const prisma = new PrismaClient();
@@ -21,7 +21,7 @@ async function main() {
       id: "seed-project-1",
       name: "Seed Board",
       description: "Dev seed project",
-      metadata: null,
+      metadata: Prisma.JsonNull,
       ownerId: user.id,
     },
   });

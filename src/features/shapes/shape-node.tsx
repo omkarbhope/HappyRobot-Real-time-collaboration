@@ -31,7 +31,7 @@ function ShapeNodeComponent(props: NodeProps) {
   const shape = data?.shape ?? "rectangle";
   const setNodes = useBoardStore((s) => s.setNodes);
   const containerRef = useRef<HTMLDivElement>(null);
-  const rotateHandleRef = useRef<HTMLElement | null>(null);
+  const rotateHandleRef = useRef<HTMLDivElement | null>(null);
   const [isRotating, setIsRotating] = useState(false);
   const startRotationRef = useRef(0);
   const startAngleRef = useRef(0);
@@ -58,7 +58,7 @@ function ShapeNodeComponent(props: NodeProps) {
       e.stopPropagation();
       const el = containerRef.current;
       if (!el) return;
-      rotateHandleRef.current = e.currentTarget as HTMLElement;
+      rotateHandleRef.current = e.currentTarget as HTMLDivElement;
       const rect = el.getBoundingClientRect();
       const initialRotation = (data as { rotation?: number }).rotation ?? 0;
       const initialAngle = getAngleDeg(rect, e.clientX, e.clientY);
@@ -67,7 +67,7 @@ function ShapeNodeComponent(props: NodeProps) {
       previousAngleRef.current = initialAngle;
       previousRotationRef.current = initialRotation;
       setIsRotating(true);
-      rotateHandleRef.current.setPointerCapture?.(e.pointerId);
+      rotateHandleRef.current?.setPointerCapture?.(e.pointerId);
     },
     [data, getAngleDeg]
   );

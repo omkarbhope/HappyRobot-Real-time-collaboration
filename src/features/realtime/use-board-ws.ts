@@ -11,7 +11,12 @@ function getWsUrl(boardId: string): string {
   return `${base}/ws?boardId=${boardId}`;
 }
 
-export function useBoardWs(boardId: string | null) {
+export function useBoardWs(
+  boardId: string | null,
+  options?: { onTaskUpserted?: (task: Task) => void; onTaskRemoved?: (taskId: string) => void }
+) {
+  const onTaskUpserted = options?.onTaskUpserted;
+  const onTaskRemoved = options?.onTaskRemoved;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addOrUpdateTask = useBoardStore((s) => s.addOrUpdateTask);
@@ -31,19 +36,25 @@ export function useBoardWs(boardId: string | null) {
         if (process.env.NODE_ENV === "development") {
           console.debug("[board-ws] applying task.created", (msg.task as { id?: string })?.id);
         }
-        addOrUpdateTask(msg.task as Task);
+        const task = msg.task as Task;
+        addOrUpdateTask(task);
+        onTaskUpserted?.(task);
         if (msg.eventId) setLastEventId(msg.eventId as string);
       } else if (type === BOARD_EVENT_TYPES.TASK_UPDATED && msg.task) {
         if (process.env.NODE_ENV === "development") {
           console.debug("[board-ws] applying task.updated", (msg.task as { id?: string })?.id);
         }
-        addOrUpdateTask(msg.task as Task);
+        const task = msg.task as Task;
+        addOrUpdateTask(task);
+        onTaskUpserted?.(task);
         if (msg.eventId) setLastEventId(msg.eventId as string);
       } else if (type === BOARD_EVENT_TYPES.TASK_DELETED && msg.taskId) {
         if (process.env.NODE_ENV === "development") {
           console.debug("[board-ws] applying task.deleted", msg.taskId);
         }
-        removeTask(msg.taskId as string);
+        const taskId = msg.taskId as string;
+        removeTask(taskId);
+        onTaskRemoved?.(taskId);
         if (msg.eventId) setLastEventId(msg.eventId as string);
       } else if (type === BOARD_EVENT_TYPES.PROJECT_UPDATED && msg.project) {
         setProject(msg.project as Project);
@@ -75,15 +86,27 @@ export function useBoardWs(boardId: string | null) {
         });
       } else if (type === BOARD_EVENT_TYPES.UNDO && msg.result) {
         const result = msg.result as { type: string; taskId?: string; commentId?: string };
-        if (result.type === "task_deleted" && result.taskId) removeTask(result.taskId);
-        else if (result.type === "task_restored" && result.taskId) {
+        if (result.type === "task_deleted" && result.taskId) {
+          removeTask(result.taskId);
+          onTaskRemoved?.(result.taskId);
+        } else if (result.type === "task_restored" && result.taskId) {
           fetch(`/api/tasks/${result.taskId}`, { credentials: "include" })
             .then((r) => r.json())
-            .then((res: { data?: Task }) => res.data && addOrUpdateTask(res.data));
+            .then((res: { data?: Task }) => {
+              if (res.data) {
+                addOrUpdateTask(res.data);
+                onTaskUpserted?.(res.data);
+              }
+            });
         } else if (result.type === "task_reverted" && result.taskId) {
           fetch(`/api/tasks/${result.taskId}`, { credentials: "include" })
             .then((r) => r.json())
-            .then((res: { data?: Task }) => res.data && addOrUpdateTask(res.data));
+            .then((res: { data?: Task }) => {
+              if (res.data) {
+                addOrUpdateTask(res.data);
+                onTaskUpserted?.(res.data);
+              }
+            });
         } else if (result.type === "comment_deleted" && result.commentId && msg.taskId) {
           removeComment(msg.taskId as string, result.commentId);
         } else if (result.type === "comment_restored" && msg.comment) {

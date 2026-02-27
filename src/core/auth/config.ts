@@ -10,6 +10,9 @@ export const authOptions: NextAuthOptions = {
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID ?? "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+      httpOptions: {
+        timeout: 15000, // 15s; default 3500ms often times out on slow networks or DB
+      },
     }),
   ],
   session: {

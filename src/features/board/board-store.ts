@@ -44,10 +44,14 @@ export interface BoardState {
   openCommentTaskId: string | null;
   commentsPanelOpen: boolean;
   lastEventId: string | null;
+  redoStack: string[];
   focusStickyId: string | null;
   clipboard: ClipboardItem | null;
   cursors: Record<string, CursorState>;
   showMinimap: boolean;
+  pushRedo: (eventId: string) => void;
+  popRedo: () => string | undefined;
+  clearRedoStack: () => void;
   setProject: (p: Project | null) => void;
   setNodes: (n: Node[] | ((prev: Node[]) => Node[])) => void;
   setEdges: (e: Edge[] | ((prev: Edge[]) => Edge[])) => void;
@@ -94,6 +98,7 @@ const defaultState = {
   openCommentTaskId: null,
   commentsPanelOpen: false,
   lastEventId: null,
+  redoStack: [],
   focusStickyId: null,
   clipboard: null,
   cursors: {},
@@ -188,7 +193,7 @@ function getLayersFromProject(project: Project | null): BoardLayer[] | undefined
   return layers;
 }
 
-export const useBoardStore = create<BoardState>((set) => ({
+export const useBoardStore = create<BoardState>((set, get) => ({
   ...defaultState,
 
   setProject: (project) =>
@@ -273,6 +278,17 @@ export const useBoardStore = create<BoardState>((set) => ({
   setCommentsPanelOpen: (commentsPanelOpen) => set({ commentsPanelOpen }),
 
   setLastEventId: (lastEventId) => set({ lastEventId }),
+
+  pushRedo: (eventId) =>
+    set((s) => ({ redoStack: [...s.redoStack, eventId] })),
+  popRedo: () => {
+    const s = get();
+    if (s.redoStack.length === 0) return undefined;
+    const popped = s.redoStack[s.redoStack.length - 1];
+    set({ redoStack: s.redoStack.slice(0, -1) });
+    return popped;
+  },
+  clearRedoStack: () => set({ redoStack: [] }),
 
   setFocusStickyId: (focusStickyId) => set({ focusStickyId }),
 
@@ -447,5 +463,5 @@ export const useBoardStore = create<BoardState>((set) => ({
       presence: s.presence.filter((p) => p.userId !== userId),
     })),
 
-  reset: () => set({ ...defaultState, clipboard: null }),
+  reset: () => set({ ...defaultState, clipboard: null, redoStack: [] }),
 }));

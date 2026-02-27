@@ -1,38 +1,148 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# HappyRobot
 
-## Getting Started
+A collaborative whiteboard app: real-time canvas (sticky notes, shapes, frames, freehand), comments, presence, undo/redo, and project sharing via invite codes.
 
-First, run the development server:
+---
+
+## Prerequisites
+
+- **Node.js** 20+
+- **PostgreSQL** (for the app database)
+- **npm** (or yarn/pnpm)
+
+---
+
+## Setup
+
+1. **Clone and install**
+
+   ```bash
+   git clone https://github.com/omkarbhope/HappyRobot-Real-time-collaboration.git
+   cd HappyRobot
+   npm install
+   ```
+
+2. **Environment variables**
+
+   Create a `.env` (and optionally `.env.local`) in the project root with:
+
+   | Variable | Description |
+   |----------|--------------|
+   | `DATABASE_URL` | PostgreSQL connection string (e.g. `postgresql://user:pass@localhost:5432/happyrobot`) |
+   | `NEXTAUTH_SECRET` | Secret for NextAuth session signing (e.g. `openssl rand -base64 32`) |
+   | `NEXTAUTH_URL` | App URL (e.g. `http://localhost:3000`) |
+   | `GOOGLE_CLIENT_ID` | Google OAuth client ID (for “Sign in with Google”) |
+   | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+   | `PORT` | Optional; server port (default `3000`) |
+
+3. **Database migration**
+
+   Create/update the database schema:
+
+   ```bash
+   npm run db:migrate
+   ```
+
+   This runs Prisma migrations. On first use it will create the database if needed (depending on your PostgreSQL setup).
+
+   Optional:
+
+   - **Seed data:** `npm run db:seed`
+   - **Prisma Studio:** `npm run db:studio` (browse and edit data)
+
+---
+
+## Running the app
+
+Use the **custom server** so the app and WebSockets run together (needed for real-time board updates, presence, cursors):
+
+```bash
+npm run server
+```
+
+This starts the HTTP server and the WebSocket endpoint at `/ws?boardId=<id>`. Open [http://localhost:3000](http://localhost:3000) in the browser.
+
+- **Development:** Next.js runs in dev mode with hot reload.
+- **Production:** Run `npm run build` first, then `npm run server`.
+
+Alternative (Next.js only, no WebSockets):
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Use this for quick UI work; real-time features will not work.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Docker
 
-## Learn More
+Build and run the app and PostgreSQL with Docker Compose:
 
-To learn more about Next.js, take a look at the following resources:
+1. **Create a `.env`** in the project root with at least:
+   - `NEXTAUTH_SECRET` (e.g. `openssl rand -base64 32`)
+   - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (for Sign in with Google)
+   - Optionally `NEXTAUTH_URL` (defaults to `http://localhost:3000`)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+2. **Start:**
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+   ```bash
+   docker compose up -d
+   ```
 
-## Deploy on Vercel
+   The app runs at [http://localhost:3000](http://localhost:3000). The database is created automatically; migrations run on startup (`prisma migrate deploy`).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+3. **Optional:** Seed the DB (run inside the app container):
 
-**This app uses a custom server (`npm run server`) for board WebSockets (`/ws`).** On Vercel you deploy the Next.js app only (no custom server): use the standard build and run. Real-time features (presence, live updates) will not use WebSockets on Vercel unless you add an external WebSocket or real-time service. For self-hosted deployment with WebSockets, run the custom server after building (e.g. `next build` then `npm run server`).
+   ```bash
+   docker compose exec app npx prisma db seed
+   ```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+To build the image only (e.g. for a different database): `docker build -t happyrobot .`. Set `DATABASE_URL` when running the container.
+
+---
+
+## Tests
+
+| Command | Description |
+|---------|-------------|
+| `npm run test` | Vitest in watch mode (unit + integration) |
+| `npm run test:run` | Single run, no watch |
+| `npm run test:coverage` | Coverage report |
+| `npm run test:e2e` | Playwright E2E (requires `npm run test:e2e:install` once) |
+
+Unit and integration tests use mocks for auth and DB; no database is required. E2E tests run against a real browser.
+
+---
+
+## Architecture and design
+
+### High-level
+
+- **Backend:** REST API (Next.js App Router under `src/app/api/`) + custom Node server that serves the app and a WebSocket at `/ws`. All protected routes use session auth and rate limiting, then call feature services. Writes go through Prisma; board changes are appended to an event log and published to WebSocket subscribers.
+- **Frontend:** Next.js 16 (App Router), React 19, a single Zustand store for the active board, and React Flow for the canvas. Realtime is handled by a WebSocket hook that updates the same store.
+
+### Main folders
+
+| Path | Role |
+|------|------|
+| `src/app/` | Pages and API routes (Next.js App Router) |
+| `src/features/` | Feature modules: board (store, tools, UI), canvas, tasks, comments, undo, invite, notifications, presence, realtime, etc. |
+| `src/core/` | Shared backend: auth, DB client, event log, realtime pub/sub, cache, rate limiting |
+| `src/lib/` | Shared client/server helpers (API client, debounced PATCH, utils) |
+| `src/components/` | Reusable UI (e.g. shadcn) |
+| `src/shared/` | Constants, types, Zod schemas used by API and features |
+| `prisma/` | Schema and migrations |
+
+### Design notes
+
+- **API:** Routes only validate input and call feature services; business logic lives in `src/features/<name>/service.ts`.
+- **Realtime:** After a write, the service invalidates the board cache and publishes an event; all clients subscribed to that board receive the same payload.
+- **Event log:** Board events are stored with a per-board sequence and advisory lock; used for sync and undo/redo.
+- **Single board store:** One Zustand store holds project, nodes, edges, tools, layers, presence, comments, and undo state so the canvas and panels stay in sync.
+
+### Documentation
+
+- **Main documentation (requirements & coverage):** [docs/HappyRobot_Requirements_Coverage.docx](docs/HappyRobot_Requirements_Coverage.docx) — primary reference for product requirements and coverage.
+- **Backend:** [docs/backend-architecture.md](docs/backend-architecture.md)
+- **Frontend:** [docs/frontend-architecture.md](docs/frontend-architecture.md)
