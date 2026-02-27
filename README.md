@@ -33,4 +33,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
+**This app uses a custom server (`npm run server`) for board WebSockets (`/ws`).** On Vercel you deploy the Next.js app only (no custom server): use the standard build and run. Real-time features (presence, live updates) will not use WebSockets on Vercel unless you add an external WebSocket or real-time service. For self-hosted deployment with WebSockets, run the custom server after building (e.g. `next build` then `npm run server`).
+
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

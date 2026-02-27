@@ -1,0 +1,192 @@
+// NextAuth + app schema for collaborative whiteboard
+// https://www.prisma.io/docs/concepts/components/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- NextAuth (Prisma adapter) ---
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token     String? @db.Text
+  expires_at       Int?
+  token_type       String?
+  scope            String?
+  id_token        String? @db.Text
+  session_state    String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  ownedProjects    Project[]           @relation("ProjectOwner")
+  projectMembers   ProjectMember[]
+  inviteCodesCreated InviteCode[]
+  tasksCreated     Task[]
+  comments         Comment[]
+  boardEvents      BoardEvent[]
+  notifications    Notification[]
+}
+
+model VerificationToken {
+  identifier String
+  token     String   @unique
+  expires   DateTime
+
+  @@unique([identifier, token])
+}
+
+// --- App domain ---
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  metadata    Json?    // flexible metadata
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner        User          @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members      ProjectMember[]
+  inviteCodes  InviteCode[]
+  tasks        Task[]
+  boardEvents  BoardEvent[]
+
+  @@index([ownerId])
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  role      String   @default("member") // 'owner' | 'member'
+  joinedAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+model InviteCode {
+  id          String    @id @default(cuid())
+  projectId   String
+  code        String    @unique
+  createdById String
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime?
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model Task {
+  id           String   @id @default(uuid())
+  projectId    String
+  parentId     String?  // frame task id when this task is inside a frame
+  title        String
+  status       String   @default("open") // e.g. open, in_progress, done
+  assignedTo   Json?    // array of user ids: ["id1","id2"]
+  configuration Json?   // { priority, description, tags[], customFields, position, size, type, contentHtml? }
+  dependencies Json?    // array of task ids: ["id1","id2"]
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent    Task?     @relation("TaskParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Task[]    @relation("TaskParent")
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  comments  Comment[]
+
+  @@index([projectId])
+  @@index([projectId, status])
+  @@index([projectId, updatedAt])
+  @@index([parentId])
+}
+
+model Comment {
+  id             String   @id @default(cuid())
+  taskId         String
+  content        String   @db.Text
+  authorId       String
+  resolved       Boolean  @default(false)
+  positionX      Float?
+  positionY      Float?
+  mentionUserIds Json?    // array of user ids: ["id1","id2"]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([taskId, createdAt])
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  type       String   // e.g. comment_mention
+  commentId  String
+  taskId     String
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+}
+
+model BoardEvent {
+  id        String   @id @default(cuid())
+  boardId   String   // projectId
+  seq       BigInt   // per-board sequence
+  type      String   // task.created, task.updated, task.deleted, comment.added, etc.
+  payload   Json
+  userId    String
+  createdAt DateTime @default(now())
+
+  board Project @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([boardId, seq])
+  @@index([boardId, seq])
+}
